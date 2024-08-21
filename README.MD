@@ -49,7 +49,7 @@ go get github.com/tzahifadida/go-dep-inject
 
 3. Register dependencies:
    ```go
-   godepinject.RegisterDependency(ctx, &MyDependency{})
+   godepinject.RegisterInitializableDependency(ctx, &MyDependency{})
    ```
 
 4. Retrieve dependencies:
@@ -77,7 +77,7 @@ Namespaces are a crucial feature of go-dep-inject, allowing you to isolate depen
 
 2. Always use the context with the namespace when registering or retrieving dependencies:
    ```go
-   godepinject.RegisterDependency(ctx, &MyDependency{})
+   godepinject.RegisterInitializableDependency(ctx, &MyDependency{})
    dep, err := godepinject.GetDependencyT[*MyDependency](ctx)
    ```
 
@@ -161,8 +161,8 @@ func main() {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	godepinject.MustRegisterDependency(ctx, &PostgresDB{})
-	godepinject.MustRegisterDependency(ctx, &UserService{})
+	godepinject.MustRegisterInitializableDependency(ctx, &PostgresDB{})
+	godepinject.MustRegisterInitializableDependency(ctx, &UserService{})
 
 	// Retrieve and use a dependency
 	// Use GetDependencyT for concrete types like UserService
@@ -260,9 +260,9 @@ func main() {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	godepinject.MustRegisterDependency(ctx, &SimpleLogger{})
-	godepinject.MustRegisterDependency(ctx, &MemoryStore{})
-	godepinject.MustRegisterDependency(ctx, &AppService{})
+	godepinject.MustRegisterInitializableDependency(ctx, &SimpleLogger{})
+	godepinject.MustRegisterInitializableDependency(ctx, &MemoryStore{})
+	godepinject.MustRegisterInitializableDependency(ctx, &AppService{})
 
 	// Retrieve and use the AppService
 	appService, err := godepinject.GetDependencyT[*AppService](ctx)

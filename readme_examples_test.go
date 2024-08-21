@@ -15,11 +15,11 @@ func TestBasicExample(t *testing.T) {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	err := godepinject.RegisterDependency(ctx, &PostgresDB{})
+	err := godepinject.RegisterInitializableDependency(ctx, &PostgresDB{})
 	if err != nil {
 		t.Fatalf("Failed to register PostgresDB: %v", err)
 	}
-	err = godepinject.RegisterDependency(ctx, &UserService{})
+	err = godepinject.RegisterInitializableDependency(ctx, &UserService{})
 	if err != nil {
 		t.Fatalf("Failed to register UserService: %v", err)
 	}
@@ -47,15 +47,15 @@ func TestAdvancedExample(t *testing.T) {
 	customLogger := &CustomLogger{}
 
 	// Register dependencies
-	err := godepinject.RegisterDependency(ctx, customLogger)
+	err := godepinject.RegisterInitializableDependency(ctx, customLogger)
 	if err != nil {
 		t.Fatalf("Failed to register CustomLogger: %v", err)
 	}
-	err = godepinject.RegisterDependency(ctx, &MemoryStore{})
+	err = godepinject.RegisterInitializableDependency(ctx, &MemoryStore{})
 	if err != nil {
 		t.Fatalf("Failed to register MemoryStore: %v", err)
 	}
-	err = godepinject.RegisterDependency(ctx, &AppService{})
+	err = godepinject.RegisterInitializableDependency(ctx, &AppService{})
 	if err != nil {
 		t.Fatalf("Failed to register AppService: %v", err)
 	}

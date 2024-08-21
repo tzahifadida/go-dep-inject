@@ -39,8 +39,8 @@ const DefaultDeadlockTimeout = 30 * time.Second
 // ErrDependencyNotFound is returned when a requested dependency is not found.
 var ErrDependencyNotFound = fmt.Errorf("dependency not found")
 
-// initializable is an interface that must be implemented by all dependencies.
-type initializable interface {
+// Initializable is an interface that must be implemented by all dependencies.
+type Initializable interface {
 	// Init initializes the dependency with the given context.
 	Init(ctx context.Context)
 }
@@ -57,11 +57,11 @@ const (
 
 // dependencyState represents the state of a registered dependency.
 type dependencyState struct {
-	initialized bool
-	initStage   DependencyInitStage
-	d           initializable
-	qualifier   string
-	initLock    chan struct{}
+	initStage DependencyInitStage
+	d         any
+	initFunc  func(ctx context.Context)
+	qualifier string
+	initLock  chan struct{}
 }
 
 var dependenciesNamespace = make(map[string]map[reflect.Type][]*dependencyState)
@@ -119,15 +119,28 @@ func TypeOfInterface[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
 
+// RegisterInitializableDependency registers a new dependency with an optional qualifier.
+//
+// Parameters:
+//   - ctx: The context containing the dependency namespace.
+//   - dependency: The dependency to register, must implement the Initializable interface.
+//   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
+//
+// Returns an error if the dependency could not be registered.
+func RegisterInitializableDependency(ctx context.Context, dependency Initializable, qualifier ...string) error {
+	return RegisterDependency(ctx, dependency, dependency.Init, qualifier...)
+}
+
 // RegisterDependency registers a new dependency with an optional qualifier.
 //
 // Parameters:
 //   - ctx: The context containing the dependency namespace.
-//   - dependency: The dependency to register, must implement the initializable interface.
+//   - dependency: The dependency to register.
+//   - initFunc: Optional (set nil) function to run a one time on GetDependencyX to initialize the dependency.
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns an error if the dependency could not be registered.
-func RegisterDependency(ctx context.Context, dependency initializable, qualifier ...string) error {
+func RegisterDependency(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) error {
 	namespace := ctx.Value(DependencyNamespaceKey).(string)
 	dependenciesNamespaceRWLock.Lock()
 	defer dependenciesNamespaceRWLock.Unlock()
@@ -141,13 +154,17 @@ func RegisterDependency(ctx context.Context, dependency initializable, qualifier
 		dependenciesNamespace[namespace] = make(map[reflect.Type][]*dependencyState)
 	}
 
+	initStage := DependencyInitStageInitialized
+	if initFunc != nil {
+		initStage = DependencyInitStageNotInitialized
+	}
 	underlyingType := reflect.TypeOf(dependency)
 	newState := &dependencyState{
-		initialized: false,
-		initStage:   DependencyInitStageNotInitialized,
-		d:           dependency,
-		qualifier:   q,
-		initLock:    make(chan struct{}, 1), // Create a buffered channel for locking
+		initStage: initStage,
+		d:         dependency,
+		initFunc:  initFunc,
+		qualifier: q,
+		initLock:  make(chan struct{}, 1), // Create a buffered channel for locking
 	}
 
 	if dependencies, ok := dependenciesNamespace[namespace][underlyingType]; ok {
@@ -164,14 +181,27 @@ func RegisterDependency(ctx context.Context, dependency initializable, qualifier
 	return nil
 }
 
+// MustRegisterInitializableDependency is like RegisterInitializableDependency but panics if an error occurs.
+//
+// Parameters:
+//   - ctx: The context containing the dependency namespace.
+//   - dependency: The dependency to register, must implement the Initializable interface.
+//   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
+func MustRegisterInitializableDependency(ctx context.Context, dependency Initializable, qualifier ...string) {
+	if err := RegisterInitializableDependency(ctx, dependency, qualifier...); err != nil {
+		panic(err)
+	}
+}
+
 // MustRegisterDependency is like RegisterDependency but panics if an error occurs.
 //
 // Parameters:
 //   - ctx: The context containing the dependency namespace.
-//   - dependency: The dependency to register, must implement the initializable interface.
+//   - dependency: The dependency to register.
+//   - initFunc: Optional (set nil) function to run a one time on GetDependencyX to initialize the dependency.
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
-func MustRegisterDependency(ctx context.Context, dependency initializable, qualifier ...string) {
-	if err := RegisterDependency(ctx, dependency, qualifier...); err != nil {
+func MustRegisterDependency(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) {
+	if err := RegisterDependency(ctx, dependency, initFunc, qualifier...); err != nil {
 		panic(err)
 	}
 }
@@ -185,7 +215,7 @@ func getDeadlockTimeout(ctx context.Context) time.Duration {
 }
 
 // getDependencyID returns a unique identifier for a dependency.
-func getDependencyID(dep initializable, qualifier string) string {
+func getDependencyID(dep any, qualifier string) string {
 	return fmt.Sprintf("%T:%s", dep, qualifier)
 }
 
@@ -275,7 +305,7 @@ func initializeDependency(ctx context.Context, dep *dependencyState) (err error)
 	}()
 
 	// Initialize the dependency
-	dep.d.Init(ctx)
+	dep.initFunc(ctx)
 
 	// Mark as completed
 	initCtx := ctx.Value(initializationContextKey).(*initializationContext)
@@ -297,7 +327,7 @@ func initializeDependency(ctx context.Context, dep *dependencyState) (err error)
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns the initialized dependency and an error if it could not be retrieved or initialized.
-func GetDependency(ctx context.Context, dependency initializable, qualifier ...string) (any, error) {
+func GetDependency(ctx context.Context, dependency Initializable, qualifier ...string) (any, error) {
 	namespace := ctx.Value(DependencyNamespaceKey).(string)
 	dependenciesNamespaceRWLock.RLock()
 	defer dependenciesNamespaceRWLock.RUnlock()
@@ -312,6 +342,9 @@ func GetDependency(ctx context.Context, dependency initializable, qualifier ...s
 		if deps, ok := dependencies[underlyingType]; ok {
 			for _, dep := range deps {
 				if q == "" || dep.qualifier == q {
+					if dep.initStage == DependencyInitStageInitialized {
+						return dep.d, nil
+					}
 					dependenciesNamespaceRWLock.RUnlock()
 					result, err := initializeAndReturn(ctx, dep)
 					dependenciesNamespaceRWLock.RLock()
@@ -332,7 +365,7 @@ func GetDependency(ctx context.Context, dependency initializable, qualifier ...s
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns the initialized dependency.
-func MustGetDependency(ctx context.Context, dependency initializable, qualifier ...string) any {
+func MustGetDependency(ctx context.Context, dependency Initializable, qualifier ...string) any {
 	dep, err := GetDependency(ctx, dependency, qualifier...)
 	if err != nil {
 		panic(err)
@@ -364,13 +397,17 @@ func GetDependencyByInterface(ctx context.Context, interfaceType reflect.Type, q
 		for _, deps := range dependencies {
 			for _, dep := range deps {
 				if reflect.TypeOf(dep.d).Implements(interfaceType) && (q == "" || dep.qualifier == q) {
-					dependenciesNamespaceRWLock.RUnlock()
-					initializedDep, err := initializeAndReturn(ctx, dep)
-					dependenciesNamespaceRWLock.RLock()
-					if err != nil {
-						return nil, err
+					if dep.initStage == DependencyInitStageInitialized {
+						foundDependencies = append(foundDependencies, dep.d)
+					} else {
+						dependenciesNamespaceRWLock.RUnlock()
+						initializedDep, err := initializeAndReturn(ctx, dep)
+						dependenciesNamespaceRWLock.RLock()
+						if err != nil {
+							return nil, err
+						}
+						foundDependencies = append(foundDependencies, initializedDep)
 					}
-					foundDependencies = append(foundDependencies, initializedDep)
 				}
 			}
 		}
@@ -428,6 +465,9 @@ func GetDependencyT[T any](ctx context.Context, qualifier ...string) (T, error) 
 		if deps, ok := dependencies[underlyingType]; ok {
 			for _, dep := range deps {
 				if q == "" || dep.qualifier == q {
+					if dep.initStage == DependencyInitStageInitialized {
+						return dep.d.(T), nil
+					}
 					dependenciesNamespaceRWLock.RUnlock()
 					initializedDep, err := initializeAndReturn(ctx, dep)
 					dependenciesNamespaceRWLock.RLock()
@@ -511,6 +551,9 @@ func GetDependencyByQualifier(ctx context.Context, qualifier string) (any, error
 		for _, deps := range dependencies {
 			for _, dep := range deps {
 				if dep.qualifier == qualifier {
+					if dep.initStage == DependencyInitStageInitialized {
+						return dep.d, nil
+					}
 					dependenciesNamespaceRWLock.RUnlock()
 					result, err := initializeAndReturn(ctx, dep)
 					dependenciesNamespaceRWLock.RLock()
@@ -547,4 +590,23 @@ func MustGetDependencyByQualifier(ctx context.Context, qualifier string) any {
 // Returns a new context with the updated deadlock detection timeout.
 func SetDeadlockTimeout(ctx context.Context, timeout time.Duration) context.Context {
 	return context.WithValue(ctx, DependencyDeadlockTimeoutKey, timeout)
+}
+
+// DeleteAllDependencies removes all dependencies within the specified namespace.
+func DeleteAllDependencies(ctx context.Context) error {
+	namespaceKey, ok := ctx.Value(DependencyNamespaceKey).(string)
+	if !ok || namespaceKey == "" {
+		return fmt.Errorf("invalid or missing namespace key")
+	}
+
+	// Lock the mutex to prevent concurrent modifications
+	dependenciesNamespaceRWLock.Lock()
+	defer dependenciesNamespaceRWLock.Unlock()
+
+	if _, exists := dependenciesNamespace[namespaceKey]; !exists {
+		return fmt.Errorf("namespace %s does not exist", namespaceKey)
+	}
+
+	delete(dependenciesNamespace, namespaceKey)
+	return nil
 }

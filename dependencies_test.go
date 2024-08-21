@@ -34,7 +34,7 @@ func TestRegisterAndGetDependency(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testDependency{}
 
-	err := RegisterDependency(ctx, dep, "test")
+	err := RegisterInitializableDependency(ctx, dep, "test")
 	if err != nil {
 		t.Fatalf("Failed to register dependency: %v", err)
 	}
@@ -72,12 +72,12 @@ func TestRegisterDuplicateDependency(t *testing.T) {
 	dep1 := &testDependency{}
 	dep2 := &testDependency{}
 
-	err := RegisterDependency(ctx, dep1, "test")
+	err := RegisterInitializableDependency(ctx, dep1, "test")
 	if err != nil {
 		t.Fatalf("Failed to register first dependency: %v", err)
 	}
 
-	err = RegisterDependency(ctx, dep2, "test")
+	err = RegisterInitializableDependency(ctx, dep2, "test")
 	if err == nil {
 		t.Errorf("Expected error when registering duplicate dependency, got nil")
 	}
@@ -87,7 +87,7 @@ func TestGetDependencyByInterface(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testImplementation{}
 
-	err := RegisterDependency(ctx, dep, "test")
+	err := RegisterInitializableDependency(ctx, dep, "test")
 	if err != nil {
 		t.Fatalf("Failed to register dependency: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGetDependencyByQualifier(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testDependency{}
 
-	err := RegisterDependency(ctx, dep, "unique")
+	err := RegisterInitializableDependency(ctx, dep, "unique")
 	if err != nil {
 		t.Fatalf("Failed to register dependency: %v", err)
 	}
@@ -134,8 +134,8 @@ func TestMustFunctions(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testImplementation{}
 
-	// Test MustRegisterDependency
-	MustRegisterDependency(ctx, dep, "test")
+	// Test MustRegisterInitializableDependency
+	MustRegisterInitializableDependency(ctx, dep, "test")
 
 	// Test MustGetDependency
 	retrieved := MustGetDependency(ctx, dep, "test")
@@ -213,12 +213,12 @@ func TestOptionalQualifier(t *testing.T) {
 	dep2 := &testDependency{}
 
 	// Register dependencies with and without qualifiers
-	err := RegisterDependency(ctx, dep1)
+	err := RegisterInitializableDependency(ctx, dep1)
 	if err != nil {
 		t.Fatalf("Failed to register dependency without qualifier: %v", err)
 	}
 
-	err = RegisterDependency(ctx, dep2, "qualified")
+	err = RegisterInitializableDependency(ctx, dep2, "qualified")
 	if err != nil {
 		t.Fatalf("Failed to register dependency with qualifier: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestGetDependencyT(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testDependency{}
 
-	err := RegisterDependency(ctx, dep, "test")
+	err := RegisterInitializableDependency(ctx, dep, "test")
 	if err != nil {
 		t.Fatalf("Failed to register dependency: %v", err)
 	}
@@ -271,11 +271,45 @@ func TestGetDependencyT(t *testing.T) {
 	}
 }
 
+func TestGetInitializedDependencyT(t *testing.T) {
+	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
+	dep := &testDependency{}
+
+	err := RegisterDependency(ctx, dep, nil, "test")
+	if err != nil {
+		t.Fatalf("Failed to register dependency: %v", err)
+	}
+
+	retrieved, err := GetDependencyT[*testDependency](ctx, "test")
+	if err != nil {
+		t.Fatalf("Failed to get dependency using GetDependencyT: %v", err)
+	}
+
+	retrieved, err = GetDependencyT[*testDependency](ctx, "test")
+	if err != nil {
+		t.Fatalf("Failed to get dependency using GetDependencyT: %v", err)
+	}
+
+	if retrieved != dep {
+		t.Errorf("Retrieved dependency is not the same as registered")
+	}
+
+	if retrieved.initialized {
+		t.Errorf("Retrieved dependency was initialized")
+	}
+
+	// Test with non-existent dependency
+	_, err = GetDependencyT[string](ctx)
+	if err == nil {
+		t.Errorf("Expected error when getting non-existent dependency, got nil")
+	}
+}
+
 func TestMustGetDependencyT(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testDependency{}
 
-	MustRegisterDependency(ctx, dep, "test")
+	MustRegisterInitializableDependency(ctx, dep, "test")
 
 	retrieved := MustGetDependencyT[*testDependency](ctx, "test")
 	if retrieved != dep {
@@ -343,10 +377,10 @@ func TestDependencyCycleDetection(t *testing.T) {
 	}
 
 	// Register the dependencies
-	RegisterDependency(ctx, depA, "depA")
-	RegisterDependency(ctx, depB, "depB")
-	RegisterDependency(ctx, depC, "depC")
-	RegisterDependency(ctx, depD, "depD")
+	RegisterInitializableDependency(ctx, depA, "depA")
+	RegisterInitializableDependency(ctx, depB, "depB")
+	RegisterInitializableDependency(ctx, depC, "depC")
+	RegisterInitializableDependency(ctx, depD, "depD")
 
 	// Attempt to initialize depA, which should result in an error due to the circular dependency
 	_, err := GetDependency(ctx, depA, "depA")
@@ -406,8 +440,8 @@ func TestInitializationTimeout(t *testing.T) {
 		},
 	}
 
-	RegisterDependency(ctx, depA, "A")
-	RegisterDependency(ctx, depB, "B")
+	RegisterInitializableDependency(ctx, depA, "A")
+	RegisterInitializableDependency(ctx, depB, "B")
 
 	go func() {
 		_, _ = GetDependency(ctx, depA, "A")
@@ -449,7 +483,7 @@ func TestPanicDuringInitialization(t *testing.T) {
 		},
 	}
 
-	RegisterDependency(ctx, panicDep, "panic")
+	RegisterInitializableDependency(ctx, panicDep, "panic")
 
 	_, err := GetDependency(ctx, panicDep, "panic")
 	if err == nil {
@@ -472,8 +506,8 @@ func TestMultipleDependenciesImplementingInterface(t *testing.T) {
 	dep1 := &testImplementation{}
 	dep2 := &testImplementation{}
 
-	RegisterDependency(ctx, dep1, "impl1")
-	RegisterDependency(ctx, dep2, "impl2")
+	RegisterInitializableDependency(ctx, dep1, "impl1")
+	RegisterInitializableDependency(ctx, dep2, "impl2")
 
 	// Try to get dependency without qualifier
 	_, err := GetDependencyByInterfaceType[testInterface](ctx)
@@ -522,9 +556,9 @@ func TestDependencyInitializationOrder(t *testing.T) {
 		},
 	}
 
-	RegisterDependency(ctx, depA, "A")
-	RegisterDependency(ctx, depB, "B")
-	RegisterDependency(ctx, depC, "C")
+	RegisterInitializableDependency(ctx, depA, "A")
+	RegisterInitializableDependency(ctx, depB, "B")
+	RegisterInitializableDependency(ctx, depC, "C")
 
 	_, err := GetDependency(ctx, depA, "A")
 	if err != nil {
@@ -559,8 +593,8 @@ func TestConcurrentDependencyInitialization(t *testing.T) {
 		mu.Unlock()
 	}
 
-	RegisterDependency(ctx, depA, "A")
-	RegisterDependency(ctx, depB, "B")
+	RegisterInitializableDependency(ctx, depA, "A")
+	RegisterInitializableDependency(ctx, depB, "B")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -595,8 +629,8 @@ func TestDependencyNamespaceIsolation(t *testing.T) {
 	dep1 := &testDependency{}
 	dep2 := &testDependency{}
 
-	RegisterDependency(ctx1, dep1, "test")
-	RegisterDependency(ctx2, dep2, "test")
+	RegisterInitializableDependency(ctx1, dep1, "test")
+	RegisterInitializableDependency(ctx2, dep2, "test")
 
 	retrieved1, err := GetDependency(ctx1, &testDependency{}, "test")
 	if err != nil {
@@ -654,8 +688,8 @@ func TestSetDeadlockTimeout(t *testing.T) {
 		},
 	}
 
-	RegisterDependency(ctx, depA, "A")
-	RegisterDependency(ctx, depB, "B")
+	RegisterInitializableDependency(ctx, depA, "A")
+	RegisterInitializableDependency(ctx, depB, "B")
 
 	go func() {
 		_, _ = GetDependency(ctx, depA, "A")
@@ -694,7 +728,7 @@ func TestNestedDependencyRegistration(t *testing.T) {
 		init: func(ctx context.Context) {
 			// Register a new dependency inside the initialization of depA
 			depC := &cyclicDependency{name: "depC"}
-			err := RegisterDependency(ctx, depC, "C")
+			err := RegisterInitializableDependency(ctx, depC, "C")
 			if err != nil {
 				t.Errorf("Failed to register depC inside depA initialization: %v", err)
 			}
@@ -713,12 +747,12 @@ func TestNestedDependencyRegistration(t *testing.T) {
 	}
 
 	// Register depA and depB
-	err := RegisterDependency(ctx, depA, "A")
+	err := RegisterInitializableDependency(ctx, depA, "A")
 	if err != nil {
 		t.Fatalf("Failed to register depA: %v", err)
 	}
 
-	err = RegisterDependency(ctx, depB, "B")
+	err = RegisterInitializableDependency(ctx, depB, "B")
 	if err != nil {
 		t.Fatalf("Failed to register depB: %v", err)
 	}
@@ -739,5 +773,25 @@ func TestNestedDependencyRegistration(t *testing.T) {
 	_, err = GetDependency(ctx, &cyclicDependency{}, "C")
 	if err != nil {
 		t.Fatalf("Failed to get depC after nested registration: %v", err)
+	}
+}
+
+func TestDeleteAllDependencies(t *testing.T) {
+	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
+	dep := &testDependency{}
+
+	err := RegisterInitializableDependency(ctx, dep, "test")
+	if err != nil {
+		t.Fatalf("Failed to register dependency: %v", err)
+	}
+
+	err = DeleteAllDependencies(ctx)
+	if err != nil {
+		t.Fatalf("Failed to delete all dependencies: %v", err)
+	}
+
+	_, err = GetDependency(ctx, dep, "test")
+	if err == nil || !errors.Is(err, ErrDependencyNotFound) {
+		t.Errorf("Expected error when getting dependency after deletion, got %v", err)
 	}
 }
