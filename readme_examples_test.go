@@ -15,27 +15,27 @@ func TestBasicExample(t *testing.T) {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	db := &Database{connection: "Connected to PostgreSQL"}
+	db := &BasicDatabase{connection: "Connected to PostgreSQL"}
 	err := godepinject.RegisterDependency(ctx, db)
 	if err != nil {
-		t.Fatalf("Failed to register Database: %v", err)
+		t.Fatalf("Failed to register BasicDatabase: %v", err)
 	}
 
-	userService := &UserService{}
+	userService := &BasicUserService{}
 	err = godepinject.RegisterDependency(ctx, userService)
 	if err != nil {
-		t.Fatalf("Failed to register UserService: %v", err)
+		t.Fatalf("Failed to register BasicUserService: %v", err)
 	}
 
 	// Retrieve and use dependencies
-	retrievedDB, err := godepinject.GetDependencyT[*Database](ctx)
+	retrievedDB, err := godepinject.GetDependencyT[*BasicDatabase](ctx)
 	if err != nil {
-		t.Fatalf("Failed to get Database: %v", err)
+		t.Fatalf("Failed to get BasicDatabase: %v", err)
 	}
 
-	retrievedUserService, err := godepinject.GetDependencyT[*UserService](ctx)
+	retrievedUserService, err := godepinject.GetDependencyT[*BasicUserService](ctx)
 	if err != nil {
-		t.Fatalf("Failed to get UserService: %v", err)
+		t.Fatalf("Failed to get BasicUserService: %v", err)
 	}
 	retrievedUserService.db = retrievedDB
 
@@ -87,22 +87,95 @@ Log: App finished running
 	}
 }
 
-// Below are the type definitions and implementations used in the examples
+// TestQualifierExample tests the qualifier example from the README
+func TestQualifierExample(t *testing.T) {
+	// Create a namespace
+	namespace := uuid.New().String()
+	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
+
+	// Register databases with qualifiers
+	postgresDB := &PostgresDB{connectionString: "postgres://localhost:5432/mydb"}
+	err := godepinject.RegisterDependency(ctx, postgresDB, "primary")
+	if err != nil {
+		t.Fatalf("Failed to register PostgresDB: %v", err)
+	}
+
+	mongoDB := &MongoDB{connectionString: "mongodb://localhost:27017/mydb"}
+	err = godepinject.RegisterDependency(ctx, mongoDB, "secondary")
+	if err != nil {
+		t.Fatalf("Failed to register MongoDB: %v", err)
+	}
+
+	// Register QualifiedUserService
+	err = godepinject.RegisterInitializableDependency(ctx, &QualifiedUserService{})
+	if err != nil {
+		t.Fatalf("Failed to register QualifiedUserService: %v", err)
+	}
+
+	// Use QualifiedUserService with primary (Postgres) database
+	userService, err := godepinject.GetDependencyT[*QualifiedUserService](ctx)
+	if err != nil {
+		t.Fatalf("Failed to get QualifiedUserService: %v", err)
+	}
+	primaryResult := userService.GetUserData()
+	expectedPrimary := "User data from Postgres: postgres://localhost:5432/mydb"
+	if primaryResult != expectedPrimary {
+		t.Errorf("Expected %q, but got %q", expectedPrimary, primaryResult)
+	}
+
+	// Create a new QualifiedUserService with MongoDB
+	mongoUserService := &QualifiedUserService{}
+	mongoCtx := context.WithValue(ctx, QualifierKey, "secondary")
+	err = godepinject.RegisterInitializableDependency(mongoCtx, mongoUserService, "mongo")
+	if err != nil {
+		t.Fatalf("Failed to register mongo QualifiedUserService: %v", err)
+	}
+
+	// Use QualifiedUserService with secondary (MongoDB) database
+	mongoUserService, err = godepinject.GetDependencyT[*QualifiedUserService](mongoCtx, "mongo")
+	if err != nil {
+		t.Fatalf("Failed to get mongo QualifiedUserService: %v", err)
+	}
+	secondaryResult := mongoUserService.GetUserData()
+	expectedSecondary := "User data from MongoDB: mongodb://localhost:27017/mydb"
+	if secondaryResult != expectedSecondary {
+		t.Errorf("Expected %q, but got %q", expectedSecondary, secondaryResult)
+	}
+
+	// Directly use databases
+	primaryDB, err := godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, "primary")
+	if err != nil {
+		t.Fatalf("Failed to get primary database: %v", err)
+	}
+	primaryDirectResult := primaryDB.GetConnection()
+	if primaryDirectResult != "Postgres: postgres://localhost:5432/mydb" {
+		t.Errorf("Expected %q, but got %q", "Postgres: postgres://localhost:5432/mydb", primaryDirectResult)
+	}
+
+	secondaryDB, err := godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, "secondary")
+	if err != nil {
+		t.Fatalf("Failed to get secondary database: %v", err)
+	}
+	secondaryDirectResult := secondaryDB.GetConnection()
+	if secondaryDirectResult != "MongoDB: mongodb://localhost:27017/mydb" {
+		t.Errorf("Expected %q, but got %q", "MongoDB: mongodb://localhost:27017/mydb", secondaryDirectResult)
+	}
+}
 
 // Basic Example types
-type Database struct {
+type BasicDatabase struct {
 	connection string
 }
 
-func (d *Database) GetConnection() string {
+func (d *BasicDatabase) GetConnection() string {
 	return d.connection
 }
 
-type UserService struct {
-	db *Database
+type BasicUserService struct {
+	db *BasicDatabase
 }
 
-func (u *UserService) GetUser() string {
+func (u *BasicUserService) GetUser() string {
 	return "User from " + u.db.GetConnection()
 }
 
@@ -167,4 +240,48 @@ func (a *AppService) Init(ctx context.Context) {
 func (a *AppService) RunApp() {
 	a.store.Store("Important data")
 	a.logger.Log("App finished running")
+}
+
+// Qualifier Example types
+type QualifiedDatabase interface {
+	GetConnection() string
+}
+
+type PostgresDB struct {
+	connectionString string
+}
+
+func (p *PostgresDB) GetConnection() string {
+	return "Postgres: " + p.connectionString
+}
+
+type MongoDB struct {
+	connectionString string
+}
+
+func (m *MongoDB) GetConnection() string {
+	return "MongoDB: " + m.connectionString
+}
+
+// QualifierKey is used to store the database qualifier in the context
+const QualifierKey = "DatabaseQualifier"
+
+type QualifiedUserService struct {
+	db QualifiedDatabase
+}
+
+func (u *QualifiedUserService) Init(ctx context.Context) {
+	var err error
+	qualifier := "primary" // Default to primary if not specified
+	if q, ok := ctx.Value(QualifierKey).(string); ok {
+		qualifier = q
+	}
+	u.db, err = godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, qualifier)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func (u *QualifiedUserService) GetUserData() string {
+	return "User data from " + u.db.GetConnection()
 }

@@ -11,6 +11,7 @@ go-dep-inject is a powerful and flexible dependency injection library for Go, le
 - [Usage](#usage)
 - [Working with Namespaces](#working-with-namespaces)
 - [Basic Example](#basic-example)
+- [Qualifier Example](#qualifier-example)
 - [Advanced Example](#advanced-example)
 - [Thread Safety](#thread-safety)
 - [License](#license)
@@ -114,53 +115,53 @@ Here's a basic example demonstrating how to use go-dep-inject with `RegisterDepe
 package main
 
 import (
-	"context"
-	"fmt"
-	"github.com/google/uuid"
-	"github.com/tzahifadida/go-dep-inject"
+   "context"
+   "fmt"
+   "github.com/google/uuid"
+   "github.com/tzahifadida/go-dep-inject"
 )
 
 type Database struct {
-	connection string
+   connection string
 }
 
 func (d *Database) GetConnection() string {
-	return d.connection
+   return d.connection
 }
 
 type UserService struct {
-	db *Database
+   db *Database
 }
 
 func (u *UserService) GetUser() string {
-	return "User from " + u.db.GetConnection()
+   return "User from " + u.db.GetConnection()
 }
 
 func main() {
-	// Create a namespace
-	namespace := uuid.New().String()
-	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
+   // Create a namespace
+   namespace := uuid.New().String()
+   ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
-	// Register dependencies
-	db := &Database{connection: "Connected to PostgreSQL"}
-	godepinject.MustRegisterDependency(ctx, db)
-	
-	userService := &UserService{}
-	godepinject.MustRegisterDependency(ctx, userService)
+   // Register dependencies
+   db := &Database{connection: "Connected to PostgreSQL"}
+   godepinject.MustRegisterDependency(ctx, db)
 
-	// Retrieve and use dependencies
-	retrievedDB, err := godepinject.GetDependencyT[*Database](ctx)
-	if err != nil {
-		panic(err)
-	}
-	
-	retrievedUserService, err := godepinject.GetDependencyT[*UserService](ctx)
-	if err != nil {
-		panic(err)
-	}
-	retrievedUserService.db = retrievedDB
+   userService := &UserService{}
+   godepinject.MustRegisterDependency(ctx, userService)
 
-	fmt.Println(retrievedUserService.GetUser())
+   // Retrieve and use dependencies
+   retrievedDB, err := godepinject.GetDependencyT[*Database](ctx)
+   if err != nil {
+      panic(err)
+   }
+
+   retrievedUserService, err := godepinject.GetDependencyT[*UserService](ctx)
+   if err != nil {
+      panic(err)
+   }
+   retrievedUserService.db = retrievedDB
+
+   fmt.Println(retrievedUserService.GetUser())
 }
 ```
 
@@ -172,6 +173,127 @@ This example demonstrates:
 5. Manually setting up dependencies after retrieval
 6. Using the injected dependencies
 
+## Qualifier Example
+
+Here's an example demonstrating how to use qualifiers with go-dep-inject:
+
+```go
+package main
+
+import (
+   "context"
+   "fmt"
+   "github.com/google/uuid"
+   "github.com/tzahifadida/go-dep-inject"
+)
+
+type QualifiedDatabase interface {
+   GetConnection() string
+}
+
+type PostgresDB struct {
+   connectionString string
+}
+
+func (p *PostgresDB) GetConnection() string {
+   return fmt.Sprintf("Postgres: %s", p.connectionString)
+}
+
+type MongoDB struct {
+   connectionString string
+}
+
+func (m *MongoDB) GetConnection() string {
+   return fmt.Sprintf("MongoDB: %s", m.connectionString)
+}
+
+// QualifierKey is used to store the database qualifier in the context
+const QualifierKey = "DatabaseQualifier"
+
+type QualifiedUserService struct {
+   db QualifiedDatabase
+}
+
+func (u *QualifiedUserService) Init(ctx context.Context) {
+   var err error
+   qualifier := "primary" // Default to primary if not specified
+   if q, ok := ctx.Value(QualifierKey).(string); ok {
+      qualifier = q
+   }
+   u.db, err = godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, qualifier)
+   if err != nil {
+      panic(err)
+   }
+}
+
+func (u *QualifiedUserService) GetUserData() string {
+   return fmt.Sprintf("User data from %s", u.db.GetConnection())
+}
+
+func main() {
+   // Create a namespace
+   namespace := uuid.New().String()
+   ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
+
+   // Register databases with qualifiers
+   postgresDB := &PostgresDB{connectionString: "postgres://localhost:5432/mydb"}
+   godepinject.MustRegisterDependency(ctx, postgresDB, "primary")
+
+   mongoDB := &MongoDB{connectionString: "mongodb://localhost:27017/mydb"}
+   godepinject.MustRegisterDependency(ctx, mongoDB, "secondary")
+
+   // Register QualifiedUserService
+   godepinject.MustRegisterInitializableDependency(ctx, &QualifiedUserService{})
+
+   // Use QualifiedUserService with primary (Postgres) database
+   userService, err := godepinject.GetDependencyT[*QualifiedUserService](ctx)
+   if err != nil {
+      panic(err)
+   }
+   fmt.Println(userService.GetUserData())
+
+   // Create a new QualifiedUserService with MongoDB
+   mongoUserService := &QualifiedUserService{}
+   mongoCtx := context.WithValue(ctx, QualifierKey, "secondary")
+   err = godepinject.RegisterInitializableDependency(mongoCtx, mongoUserService, "mongo")
+   if err != nil {
+      panic(err)
+   }
+
+   // Use QualifiedUserService with secondary (MongoDB) database
+   mongoUserService, err = godepinject.GetDependencyT[*QualifiedUserService](mongoCtx, "mongo")
+   if err != nil {
+      panic(err)
+   }
+   fmt.Println(mongoUserService.GetUserData())
+
+   // Directly use databases
+   primaryDB, err := godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, "primary")
+   if err != nil {
+      panic(err)
+   }
+   fmt.Println("Direct primary DB connection:", primaryDB.GetConnection())
+
+   secondaryDB, err := godepinject.GetDependencyByInterfaceType[QualifiedDatabase](ctx, "secondary")
+   if err != nil {
+      panic(err)
+   }
+   fmt.Println("Direct secondary DB connection:", secondaryDB.GetConnection())
+}
+```
+
+This example demonstrates:
+1. Defining an interface (`QualifiedDatabase`) and two implementing structs (`PostgresDB` and `MongoDB`)
+2. Using a `QualifierKey` constant to store the database qualifier in the context
+3. Implementing a `QualifiedUserService` that reads the qualifier from the context in its `Init` method
+4. Registering multiple implementations of the same interface with different qualifiers
+5. Creating a service (`QualifiedUserService`) that uses a qualified dependency
+6. Retrieving and using dependencies with specific qualifiers
+7. Creating variations of a service using different qualified dependencies
+8. Directly accessing qualified dependencies
+
+Using qualifiers allows you to manage multiple instances of the same type or interface, providing flexibility in configuring your application components.
+
 ## Advanced Example
 
 Here's an advanced example showing dependencies with initialization functions and interface-based dependency injection:
@@ -180,84 +302,84 @@ Here's an advanced example showing dependencies with initialization functions an
 package main
 
 import (
-	"context"
-	"fmt"
-	"github.com/google/uuid"
-	"github.com/tzahifadida/go-dep-inject"
+   "context"
+   "fmt"
+   "github.com/google/uuid"
+   "github.com/tzahifadida/go-dep-inject"
 )
 
 type Logger interface {
-	Log(message string)
+   Log(message string)
 }
 
 type SimpleLogger struct{}
 
 func (l *SimpleLogger) Log(message string) {
-	fmt.Println("Log:", message)
+   fmt.Println("Log:", message)
 }
 
 type DataStore interface {
-	Store(data string)
+   Store(data string)
 }
 
 type MemoryStore struct {
-	logger Logger
-	data   []string
+   logger Logger
+   data   []string
 }
 
 func (m *MemoryStore) Init(ctx context.Context) {
-	var err error
-	m.logger, err = godepinject.GetDependencyByInterfaceType[Logger](ctx)
-	if err != nil {
-		panic(err)
-	}
-	m.logger.Log("MemoryStore initialized")
+   var err error
+   m.logger, err = godepinject.GetDependencyByInterfaceType[Logger](ctx)
+   if err != nil {
+      panic(err)
+   }
+   m.logger.Log("MemoryStore initialized")
 }
 
 func (m *MemoryStore) Store(data string) {
-	m.data = append(m.data, data)
-	m.logger.Log("Data stored: " + data)
+   m.data = append(m.data, data)
+   m.logger.Log("Data stored: " + data)
 }
 
 type AppService struct {
-	store  DataStore
-	logger Logger
+   store  DataStore
+   logger Logger
 }
 
 func (a *AppService) Init(ctx context.Context) {
-	var err error
-	a.store, err = godepinject.GetDependencyByInterfaceType[DataStore](ctx)
-	if err != nil {
-		panic(err)
-	}
-	a.logger, err = godepinject.GetDependencyByInterfaceType[Logger](ctx)
-	if err != nil {
-		panic(err)
-	}
-	a.logger.Log("AppService initialized")
+   var err error
+   a.store, err = godepinject.GetDependencyByInterfaceType[DataStore](ctx)
+   if err != nil {
+      panic(err)
+   }
+   a.logger, err = godepinject.GetDependencyByInterfaceType[Logger](ctx)
+   if err != nil {
+      panic(err)
+   }
+   a.logger.Log("AppService initialized")
 }
 
 func (a *AppService) RunApp() {
-	a.store.Store("Important data")
-	a.logger.Log("App finished running")
+   a.store.Store("Important data")
+   a.logger.Log("App finished running")
 }
 
 func main() {
-	// Create a namespace
-	namespace := uuid.New().String()
-	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
+   // Create a namespace
+   namespace := uuid.New().String()
+   ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
-	// Register dependencies
-	godepinject.MustRegisterDependency(ctx, &SimpleLogger{})
-	godepinject.MustRegisterInitializableDependency(ctx, &MemoryStore{})
-	godepinject.MustRegisterInitializableDependency(ctx, &AppService{})
+   // Register dependencies
+   godepinject.MustRegisterDependency(ctx, &SimpleLogger{})
+   godepinject.MustRegisterInitializableDependency(ctx, &MemoryStore{})
+   godepinject.MustRegisterInitializableDependency(ctx, &AppService{})
 
-	// Retrieve and use the AppService
-	appService, err := godepinject.GetDependencyT[*AppService](ctx)
-	if err != nil {
-		panic(err)
-	}
-	appService.RunApp()
+   // Retrieve and use the AppService
+   appService, err := godepinject.GetDependencyT[*AppService](ctx)
+   if err != nil {
+      panic(err)
+   }
+   appService.RunApp()
 }
 ```
 
