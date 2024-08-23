@@ -49,7 +49,7 @@ go get github.com/tzahifadida/go-dep-inject
 
 3. Register dependencies:
    ```go
-   godepinject.RegisterInitializableDependency(ctx, &MyDependency{})
+   godepinject.RegisterDependency(ctx, &MyDependency{})
    ```
 
 4. Retrieve dependencies:
@@ -62,8 +62,6 @@ go get github.com/tzahifadida/go-dep-inject
    ```
 
 Note: `GetDependencyByInterfaceType` searches for and returns a dependency that implements the specified interface. This allows for loose coupling between your components, as you can work with interfaces rather than concrete types. Use `GetDependencyT` for retrieving concrete types.
-
-Important: When you retrieve a dependency for the first time, its `Init` function is automatically called once. Subsequent retrievals of the same dependency will return the initialized instance without calling `Init` again. This ensures that each dependency is properly initialized exactly once, regardless of how many times it's retrieved or injected into other dependencies.
 
 ## Working with Namespaces
 
@@ -110,7 +108,7 @@ Remember that dependencies registered in one namespace are not available in anot
 
 ## Basic Example
 
-Here's a basic example demonstrating how to use go-dep-inject with both interface-based and concrete type dependency retrieval:
+Here's a basic example demonstrating how to use go-dep-inject with `RegisterDependency`:
 
 ```go
 package main
@@ -122,33 +120,16 @@ import (
 	"github.com/tzahifadida/go-dep-inject"
 )
 
-type Database interface {
-	GetConnection() string
-}
-
-type PostgresDB struct {
+type Database struct {
 	connection string
 }
 
-func (d *PostgresDB) Init(ctx context.Context) {
-	d.connection = "Connected to PostgreSQL"
-}
-
-func (d *PostgresDB) GetConnection() string {
+func (d *Database) GetConnection() string {
 	return d.connection
 }
 
 type UserService struct {
-	db Database
-}
-
-func (u *UserService) Init(ctx context.Context) {
-	var err error
-	// Retrieves a dependency that implements the Database interface
-	u.db, err = godepinject.GetDependencyByInterfaceType[Database](ctx)
-	if err != nil {
-		panic(err)
-	}
+	db *Database
 }
 
 func (u *UserService) GetUser() string {
@@ -161,30 +142,39 @@ func main() {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	godepinject.MustRegisterInitializableDependency(ctx, &PostgresDB{})
-	godepinject.MustRegisterInitializableDependency(ctx, &UserService{})
+	db := &Database{connection: "Connected to PostgreSQL"}
+	godepinject.MustRegisterDependency(ctx, db)
+	
+	userService := &UserService{}
+	godepinject.MustRegisterDependency(ctx, userService)
 
-	// Retrieve and use a dependency
-	// Use GetDependencyT for concrete types like UserService
-	userService, err := godepinject.GetDependencyT[*UserService](ctx)
+	// Retrieve and use dependencies
+	retrievedDB, err := godepinject.GetDependencyT[*Database](ctx)
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println(userService.GetUser())
+	
+	retrievedUserService, err := godepinject.GetDependencyT[*UserService](ctx)
+	if err != nil {
+		panic(err)
+	}
+	retrievedUserService.db = retrievedDB
+
+	fmt.Println(retrievedUserService.GetUser())
 }
 ```
 
 This example demonstrates:
 1. Creating a namespace using a context
-2. Defining and implementing an interface (Database)
-3. Registering a concrete implementation (PostgresDB) and a service (UserService)
-4. Retrieving dependencies by interface (Database in UserService.Init)
-5. Retrieving concrete type dependencies (UserService in main)
+2. Defining simple structs (Database and UserService)
+3. Registering dependencies without initialization functions
+4. Retrieving concrete type dependencies
+5. Manually setting up dependencies after retrieval
 6. Using the injected dependencies
 
 ## Advanced Example
 
-Here's an advanced example showing dependencies injecting other dependencies and retrieving them by interface:
+Here's an advanced example showing dependencies with initialization functions and interface-based dependency injection:
 
 ```go
 package main
@@ -201,8 +191,6 @@ type Logger interface {
 }
 
 type SimpleLogger struct{}
-
-func (l *SimpleLogger) Init(ctx context.Context) {}
 
 func (l *SimpleLogger) Log(message string) {
 	fmt.Println("Log:", message)
@@ -260,7 +248,7 @@ func main() {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	godepinject.MustRegisterInitializableDependency(ctx, &SimpleLogger{})
+	godepinject.MustRegisterDependency(ctx, &SimpleLogger{})
 	godepinject.MustRegisterInitializableDependency(ctx, &MemoryStore{})
 	godepinject.MustRegisterInitializableDependency(ctx, &AppService{})
 
@@ -274,12 +262,12 @@ func main() {
 ```
 
 This advanced example demonstrates:
-1. Multiple interfaces and implementations (Logger, DataStore)
-2. Dependencies injecting other dependencies (MemoryStore depends on Logger)
-3. A service using multiple injected dependencies (AppService uses both DataStore and Logger)
-4. Registering concrete implementations for interfaces
-5. Retrieving dependencies by interface within Init methods
-6. Retrieving a concrete type (AppService) in the main function
+1. Defining and using interfaces (Logger, DataStore)
+2. Dependencies with initialization functions (MemoryStore, AppService)
+3. Interface-based dependency injection
+4. Automatic initialization of dependencies upon retrieval
+5. Registering both simple dependencies and those with Init methods
+6. Retrieving and using a fully initialized service (AppService)
 
 Note: The Init method of each dependency is automatically called when the dependency is first retrieved. This ensures that all required dependencies are properly initialized before use.
 

@@ -1,19 +1,36 @@
-// Package godepinject provides a dependency injection system for managing and retrieving dependencies.
+// Package godepinject provides a flexible and type-safe dependency injection system for Go applications.
 //
-// This package allows for registering, initializing, and retrieving dependencies in a flexible
-// and type-safe manner. It supports dependency namespaces, qualifiers, and deadlock detection.
+// It supports both simple dependency registration and dependencies with custom initialization.
 // The library leverages Go's generics to provide type-safe dependency registration and retrieval,
 // allowing for compile-time type checking and improved code safety.
+//
+// Key features:
+//   - Generic-based dependency registration and retrieval
+//   - Support for dependencies with and without initialization functions
+//   - Namespace support for isolating dependencies
+//   - Interface-based dependency injection
+//   - Thread-safe operations
+//   - Deadlock detection and configurable timeout
+//   - Panic recovery during dependency initialization
 //
 // Configuration:
 //   - Use context.WithValue(ctx, DependencyNamespaceKey, uuid.New()) to create a new namespace.
 //   - Use SetDeadlockTimeout(ctx, duration) to set a custom deadlock detection timeout.
 //
-// Key Features:
-//   - Generic-based dependency registration and retrieval for type safety.
-//   - Support for dependency qualifiers to distinguish between multiple instances of the same type.
-//   - Automatic dependency initialization with cycle detection.
-//   - Namespace support for isolating dependencies in different parts of your application.
+// Basic usage:
+//
+//	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, uuid.New().String())
+//	godepinject.RegisterDependency(ctx, &MyDependency{})
+//	dep, err := godepinject.GetDependencyT[*MyDependency](ctx)
+//
+// For dependencies requiring initialization:
+//
+//	godepinject.RegisterInitializableDependency(ctx, &MyInitializableDependency{})
+//	dep, err := godepinject.GetDependencyT[*MyInitializableDependency](ctx)
+//
+// For interface-based injection:
+//
+//	dep, err := godepinject.GetDependencyByInterfaceType[MyInterface](ctx)
 package godepinject
 
 import (
@@ -39,7 +56,7 @@ const DefaultDeadlockTimeout = 30 * time.Second
 // ErrDependencyNotFound is returned when a requested dependency is not found.
 var ErrDependencyNotFound = fmt.Errorf("dependency not found")
 
-// Initializable is an interface that must be implemented by all dependencies.
+// Initializable is an interface that can be implemented by dependencies requiring custom initialization.
 type Initializable interface {
 	// Init initializes the dependency with the given context.
 	Init(ctx context.Context)
@@ -119,7 +136,7 @@ func TypeOfInterface[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
 
-// RegisterInitializableDependency registers a new dependency with an optional qualifier.
+// RegisterInitializableDependency registers a new dependency that implements the Initializable interface.
 //
 // Parameters:
 //   - ctx: The context containing the dependency namespace.
@@ -128,19 +145,43 @@ func TypeOfInterface[T any]() reflect.Type {
 //
 // Returns an error if the dependency could not be registered.
 func RegisterInitializableDependency(ctx context.Context, dependency Initializable, qualifier ...string) error {
-	return RegisterDependency(ctx, dependency, dependency.Init, qualifier...)
+	return RegisterDependencyWithInit(ctx, dependency, dependency.Init, qualifier...)
 }
 
-// RegisterDependency registers a new dependency with an optional qualifier.
+// RegisterDependency registers a new dependency without an initialization function.
 //
 // Parameters:
 //   - ctx: The context containing the dependency namespace.
 //   - dependency: The dependency to register.
-//   - initFunc: Optional (set nil) function to run a one time on GetDependencyX to initialize the dependency.
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns an error if the dependency could not be registered.
-func RegisterDependency(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) error {
+func RegisterDependency(ctx context.Context, dependency any, qualifier ...string) error {
+	return RegisterDependencyWithInit(ctx, dependency, nil, qualifier...)
+}
+
+// MustRegisterDependency is like RegisterDependency but panics if an error occurs.
+//
+// Parameters:
+//   - ctx: The context containing the dependency namespace.
+//   - dependency: The dependency to register.
+//   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
+func MustRegisterDependency(ctx context.Context, dependency any, qualifier ...string) {
+	if err := RegisterDependency(ctx, dependency, qualifier...); err != nil {
+		panic(err)
+	}
+}
+
+// RegisterDependencyWithInit registers a new dependency with an optional init function and qualifier.
+//
+// Parameters:
+//   - ctx: The context containing the dependency namespace.
+//   - dependency: The dependency to register.
+//   - initFunc: Optional function to run once on first retrieval to initialize the dependency.
+//   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
+//
+// Returns an error if the dependency could not be registered.
+func RegisterDependencyWithInit(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) error {
 	namespace := ctx.Value(DependencyNamespaceKey).(string)
 	dependenciesNamespaceRWLock.Lock()
 	defer dependenciesNamespaceRWLock.Unlock()
@@ -193,15 +234,15 @@ func MustRegisterInitializableDependency(ctx context.Context, dependency Initial
 	}
 }
 
-// MustRegisterDependency is like RegisterDependency but panics if an error occurs.
+// MustRegisterDependencyWithInit is like RegisterDependencyWithInit but panics if an error occurs.
 //
 // Parameters:
 //   - ctx: The context containing the dependency namespace.
 //   - dependency: The dependency to register.
-//   - initFunc: Optional (set nil) function to run a one time on GetDependencyX to initialize the dependency.
+//   - initFunc: Optional function to run once on first retrieval to initialize the dependency.
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
-func MustRegisterDependency(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) {
-	if err := RegisterDependency(ctx, dependency, initFunc, qualifier...); err != nil {
+func MustRegisterDependencyWithInit(ctx context.Context, dependency any, initFunc func(ctx context.Context), qualifier ...string) {
+	if err := RegisterDependencyWithInit(ctx, dependency, initFunc, qualifier...); err != nil {
 		panic(err)
 	}
 }
@@ -327,7 +368,7 @@ func initializeDependency(ctx context.Context, dep *dependencyState) (err error)
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns the initialized dependency and an error if it could not be retrieved or initialized.
-func GetDependency(ctx context.Context, dependency Initializable, qualifier ...string) (any, error) {
+func GetDependency(ctx context.Context, dependency any, qualifier ...string) (any, error) {
 	namespace := ctx.Value(DependencyNamespaceKey).(string)
 	dependenciesNamespaceRWLock.RLock()
 	defer dependenciesNamespaceRWLock.RUnlock()
@@ -365,7 +406,7 @@ func GetDependency(ctx context.Context, dependency Initializable, qualifier ...s
 //   - qualifier: Optional qualifier to distinguish between multiple dependencies of the same type.
 //
 // Returns the initialized dependency.
-func MustGetDependency(ctx context.Context, dependency Initializable, qualifier ...string) any {
+func MustGetDependency(ctx context.Context, dependency any, qualifier ...string) any {
 	dep, err := GetDependency(ctx, dependency, qualifier...)
 	if err != nil {
 		panic(err)
@@ -593,6 +634,11 @@ func SetDeadlockTimeout(ctx context.Context, timeout time.Duration) context.Cont
 }
 
 // DeleteAllDependencies removes all dependencies within the specified namespace.
+//
+// Parameters:
+//   - ctx: The context containing the dependency namespace to clear.
+//
+// Returns an error if the namespace is invalid or doesn't exist.
 func DeleteAllDependencies(ctx context.Context) error {
 	namespaceKey, ok := ctx.Value(DependencyNamespaceKey).(string)
 	if !ok || namespaceKey == "" {

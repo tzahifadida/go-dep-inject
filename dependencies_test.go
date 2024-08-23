@@ -275,7 +275,7 @@ func TestGetInitializedDependencyT(t *testing.T) {
 	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
 	dep := &testDependency{}
 
-	err := RegisterDependency(ctx, dep, nil, "test")
+	err := RegisterDependencyWithInit(ctx, dep, nil, "test")
 	if err != nil {
 		t.Fatalf("Failed to register dependency: %v", err)
 	}
@@ -793,5 +793,66 @@ func TestDeleteAllDependencies(t *testing.T) {
 	_, err = GetDependency(ctx, dep, "test")
 	if err == nil || !errors.Is(err, ErrDependencyNotFound) {
 		t.Errorf("Expected error when getting dependency after deletion, got %v", err)
+	}
+}
+
+func TestRegisterDependency(t *testing.T) {
+	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
+
+	// Create a simple struct to use as a dependency
+	type simpleDep struct {
+		Value string
+	}
+
+	dep := &simpleDep{Value: "test value"}
+
+	// Register the dependency without an initializer
+	err := RegisterDependency(ctx, dep, "simple")
+	if err != nil {
+		t.Fatalf("Failed to register dependency: %v", err)
+	}
+
+	// Retrieve the dependency
+	retrieved, err := GetDependency(ctx, &simpleDep{}, "simple")
+	if err != nil {
+		t.Fatalf("Failed to get dependency: %v", err)
+	}
+
+	// Check if the retrieved dependency is the same as the registered one
+	if retrieved != dep {
+		t.Errorf("Retrieved dependency is not the same as registered")
+	}
+
+	// Check if the Value field is correct
+	if retrievedDep, ok := retrieved.(*simpleDep); ok {
+		if retrievedDep.Value != "test value" {
+			t.Errorf("Expected Value to be 'test value', got '%s'", retrievedDep.Value)
+		}
+	} else {
+		t.Errorf("Retrieved dependency is not of type *simpleDep")
+	}
+
+	// Try to register the same dependency again (should fail)
+	err = RegisterDependency(ctx, &simpleDep{}, "simple")
+	if err == nil {
+		t.Errorf("Expected error when registering duplicate dependency, got nil")
+	}
+
+	// Register another dependency with a different qualifier
+	dep2 := &simpleDep{Value: "another value"}
+	err = RegisterDependency(ctx, dep2, "simple2")
+	if err != nil {
+		t.Fatalf("Failed to register second dependency: %v", err)
+	}
+
+	// Retrieve the second dependency
+	retrieved2, err := GetDependency(ctx, &simpleDep{}, "simple2")
+	if err != nil {
+		t.Fatalf("Failed to get second dependency: %v", err)
+	}
+
+	// Check if the second retrieved dependency is correct
+	if retrieved2 != dep2 {
+		t.Errorf("Retrieved second dependency is not the same as registered")
 	}
 }

@@ -15,22 +15,31 @@ func TestBasicExample(t *testing.T) {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Register dependencies
-	err := godepinject.RegisterInitializableDependency(ctx, &PostgresDB{})
+	db := &Database{connection: "Connected to PostgreSQL"}
+	err := godepinject.RegisterDependency(ctx, db)
 	if err != nil {
-		t.Fatalf("Failed to register PostgresDB: %v", err)
+		t.Fatalf("Failed to register Database: %v", err)
 	}
-	err = godepinject.RegisterInitializableDependency(ctx, &UserService{})
+
+	userService := &UserService{}
+	err = godepinject.RegisterDependency(ctx, userService)
 	if err != nil {
 		t.Fatalf("Failed to register UserService: %v", err)
 	}
 
-	// Retrieve and use a dependency
-	userService, err := godepinject.GetDependencyT[*UserService](ctx)
+	// Retrieve and use dependencies
+	retrievedDB, err := godepinject.GetDependencyT[*Database](ctx)
+	if err != nil {
+		t.Fatalf("Failed to get Database: %v", err)
+	}
+
+	retrievedUserService, err := godepinject.GetDependencyT[*UserService](ctx)
 	if err != nil {
 		t.Fatalf("Failed to get UserService: %v", err)
 	}
+	retrievedUserService.db = retrievedDB
 
-	result := userService.GetUser()
+	result := retrievedUserService.GetUser()
 	expected := "User from Connected to PostgreSQL"
 	if result != expected {
 		t.Errorf("Expected %q, but got %q", expected, result)
@@ -44,12 +53,12 @@ func TestAdvancedExample(t *testing.T) {
 	ctx := context.WithValue(context.Background(), godepinject.DependencyNamespaceKey, namespace)
 
 	// Create a custom logger to capture output
-	customLogger := &CustomLogger{}
+	customLogger := &SimpleLogger{}
 
 	// Register dependencies
-	err := godepinject.RegisterInitializableDependency(ctx, customLogger)
+	err := godepinject.RegisterDependency(ctx, customLogger)
 	if err != nil {
-		t.Fatalf("Failed to register CustomLogger: %v", err)
+		t.Fatalf("Failed to register SimpleLogger: %v", err)
 	}
 	err = godepinject.RegisterInitializableDependency(ctx, &MemoryStore{})
 	if err != nil {
@@ -80,54 +89,37 @@ Log: App finished running
 
 // Below are the type definitions and implementations used in the examples
 
-type Database interface {
-	GetConnection() string
-}
-
-type PostgresDB struct {
+// Basic Example types
+type Database struct {
 	connection string
 }
 
-func (d *PostgresDB) Init(ctx context.Context) {
-	d.connection = "Connected to PostgreSQL"
-}
-
-func (d *PostgresDB) GetConnection() string {
+func (d *Database) GetConnection() string {
 	return d.connection
 }
 
 type UserService struct {
-	db Database
-}
-
-func (u *UserService) Init(ctx context.Context) {
-	var err error
-	u.db, err = godepinject.GetDependencyByInterfaceType[Database](ctx)
-	if err != nil {
-		panic(err)
-	}
+	db *Database
 }
 
 func (u *UserService) GetUser() string {
 	return "User from " + u.db.GetConnection()
 }
 
+// Advanced Example types
 type Logger interface {
 	Log(message string)
 }
 
-// CustomLogger is used to capture log output for testing
-type CustomLogger struct {
+type SimpleLogger struct {
 	output strings.Builder
 }
 
-func (l *CustomLogger) Init(ctx context.Context) {}
-
-func (l *CustomLogger) Log(message string) {
+func (l *SimpleLogger) Log(message string) {
 	l.output.WriteString("Log: " + message + "\n")
 }
 
-func (l *CustomLogger) Output() string {
+func (l *SimpleLogger) Output() string {
 	return l.output.String()
 }
 
