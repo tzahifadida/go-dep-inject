@@ -37,6 +37,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 	"time"
 )
@@ -655,4 +656,32 @@ func DeleteAllDependencies(ctx context.Context) error {
 
 	delete(dependenciesNamespace, namespaceKey)
 	return nil
+}
+
+// ListRegisteredDependencies returns a slice of strings representing all registered dependencyIDs in the given namespace.
+// Each dependencyID is in the format "type:qualifier".
+func ListRegisteredDependencies(ctx context.Context) ([]string, error) {
+	namespace, ok := ctx.Value(DependencyNamespaceKey).(string)
+	if !ok || namespace == "" {
+		return nil, fmt.Errorf("invalid or missing namespace key")
+	}
+
+	dependenciesNamespaceRWLock.RLock()
+	defer dependenciesNamespaceRWLock.RUnlock()
+
+	dependencies, exists := dependenciesNamespace[namespace]
+	if !exists {
+		return nil, fmt.Errorf("namespace %s does not exist", namespace)
+	}
+
+	var dependencyIDs []string
+	for t, depSlice := range dependencies {
+		for _, dep := range depSlice {
+			dependencyID := fmt.Sprintf("%s:%s", t.String(), dep.qualifier)
+			dependencyIDs = append(dependencyIDs, dependencyID)
+		}
+	}
+
+	sort.Strings(dependencyIDs)
+	return dependencyIDs, nil
 }

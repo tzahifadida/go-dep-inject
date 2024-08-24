@@ -856,3 +856,48 @@ func TestRegisterDependency(t *testing.T) {
 		t.Errorf("Retrieved second dependency is not the same as registered")
 	}
 }
+
+func TestListRegisteredDependencies(t *testing.T) {
+	ctx := context.WithValue(context.Background(), DependencyNamespaceKey, uuid.New().String())
+
+	// Register some dependencies
+	RegisterDependency(ctx, &testDependency{}, "test1")
+	RegisterDependency(ctx, &testImplementation{}, "test2")
+	RegisterDependency(ctx, "string dep", "test3")
+	RegisterDependency(ctx, 42, "test4")
+	RegisterDependency(ctx, &testDependency{}, "test5") // Same type as test1, different qualifier
+
+	// List registered dependencies
+	dependencyIDs, err := ListRegisteredDependencies(ctx)
+	if err != nil {
+		t.Fatalf("Failed to list registered dependencies: %v", err)
+	}
+
+	// Expected dependencyIDs
+	expectedDependencyIDs := []string{
+		"*godepinject.testDependency:test1",
+		"*godepinject.testDependency:test5",
+		"*godepinject.testImplementation:test2",
+		"int:test4",
+		"string:test3",
+	}
+
+	// Check if the returned dependencyIDs match the expected dependencyIDs
+	if !reflect.DeepEqual(dependencyIDs, expectedDependencyIDs) {
+		t.Errorf("Expected dependencyIDs %v, but got %v", expectedDependencyIDs, dependencyIDs)
+	}
+
+	// Test with non-existent namespace
+	invalidCtx := context.WithValue(context.Background(), DependencyNamespaceKey, "non-existent")
+	_, err = ListRegisteredDependencies(invalidCtx)
+	if err == nil {
+		t.Error("Expected error for non-existent namespace, but got nil")
+	}
+
+	// Test with missing namespace key
+	invalidCtx = context.Background()
+	_, err = ListRegisteredDependencies(invalidCtx)
+	if err == nil {
+		t.Error("Expected error for missing namespace key, but got nil")
+	}
+}
