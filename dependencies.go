@@ -137,6 +137,48 @@ func TypeOfInterface[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
 
+// cacheKey uniquely identifies a cache entry within a namespace
+type cacheKey struct {
+	interfaceType reflect.Type
+	qualifier     string
+}
+
+// interfaceCache holds the cache for interface-to-dependency lookups
+type interfaceCache struct {
+	cache map[string]map[cacheKey]interface{}
+}
+
+var globalInterfaceCache = &interfaceCache{
+	cache: make(map[string]map[cacheKey]interface{}),
+}
+
+// getFromCache attempts to retrieve a dependency from the cache
+func (ic *interfaceCache) getFromCache(namespace string, interfaceType reflect.Type, qualifier string) (interface{}, bool) {
+	namespaceCache, exists := ic.cache[namespace]
+	if !exists {
+		return nil, false
+	}
+
+	key := cacheKey{interfaceType, qualifier}
+	dep, found := namespaceCache[key]
+	return dep, found
+}
+
+// addToCache adds a found dependency to the cache
+func (ic *interfaceCache) addToCache(namespace string, interfaceType reflect.Type, qualifier string, dep interface{}) {
+	if _, exists := ic.cache[namespace]; !exists {
+		ic.cache[namespace] = make(map[cacheKey]interface{})
+	}
+
+	key := cacheKey{interfaceType, qualifier}
+	ic.cache[namespace][key] = dep
+}
+
+// invalidateCache removes all cached entries for a specific namespace
+func (ic *interfaceCache) invalidateCache(namespace string) {
+	delete(ic.cache, namespace)
+}
+
 // RegisterInitializableDependency registers a new dependency that implements the Initializable interface.
 //
 // Parameters:
@@ -219,6 +261,9 @@ func RegisterDependencyWithInit(ctx context.Context, dependency any, initFunc fu
 	} else {
 		dependenciesNamespace[namespace][underlyingType] = []*dependencyState{newState}
 	}
+
+	// Invalidate the cache for this namespace after registering a new dependency
+	globalInterfaceCache.invalidateCache(namespace)
 
 	return nil
 }
@@ -425,12 +470,17 @@ func MustGetDependency(ctx context.Context, dependency any, qualifier ...string)
 // Returns the initialized dependency and an error if it could not be retrieved or initialized.
 func GetDependencyByInterface(ctx context.Context, interfaceType reflect.Type, qualifier ...string) (any, error) {
 	namespace := ctx.Value(DependencyNamespaceKey).(string)
-	dependenciesNamespaceRWLock.RLock()
-	defer dependenciesNamespaceRWLock.RUnlock()
-
 	q := ""
 	if len(qualifier) > 0 {
 		q = qualifier[0]
+	}
+
+	dependenciesNamespaceRWLock.RLock()
+	defer dependenciesNamespaceRWLock.RUnlock()
+
+	// Try to get from cache first
+	if cachedDep, found := globalInterfaceCache.getFromCache(namespace, interfaceType, q); found {
+		return cachedDep, nil
 	}
 
 	if dependencies, ok := dependenciesNamespace[namespace]; ok {
@@ -455,6 +505,8 @@ func GetDependencyByInterface(ctx context.Context, interfaceType reflect.Type, q
 		}
 
 		if len(foundDependencies) == 1 {
+			// Cache the found dependency
+			globalInterfaceCache.addToCache(namespace, interfaceType, q, foundDependencies[0])
 			return foundDependencies[0], nil
 		} else if len(foundDependencies) > 1 && q == "" {
 			return nil, &DependencyInitializationError{
@@ -655,6 +707,10 @@ func DeleteAllDependencies(ctx context.Context) error {
 	}
 
 	delete(dependenciesNamespace, namespaceKey)
+
+	// Invalidate the cache for this namespace after deleting all dependencies
+	globalInterfaceCache.invalidateCache(namespaceKey)
+
 	return nil
 }
 
