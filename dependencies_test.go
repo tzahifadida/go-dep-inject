@@ -20,6 +20,10 @@ func (t *testDependency) Init(ctx context.Context) {
 	t.initialized = true
 }
 
+func (t *testDependency) Qualify(ctx context.Context) string {
+	return "testDependencyQualifier"
+}
+
 type testInterface interface {
 	TestMethod()
 }

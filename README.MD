@@ -177,6 +177,12 @@ This example demonstrates:
 
 Here's an example demonstrating how to use qualifiers with go-dep-inject:
 
+Note: you can achieve the same result of using a qualifier using the Qualify interface:
+```
+type Qualifiable interface {
+	Qualify(ctx context.Context) string
+}
+```
 ```go
 package main
 

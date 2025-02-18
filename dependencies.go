@@ -63,6 +63,11 @@ type Initializable interface {
 	Init(ctx context.Context)
 }
 
+// Qualifiable that allows to retrieve a qualifier for the service. If it exists and no qualifier was specified then it will be used as the qualifier.
+type Qualifiable interface {
+	Qualify(ctx context.Context) string
+}
+
 // DependencyInitStage represents the initialization stage of a dependency.
 type DependencyInitStage int
 
@@ -232,6 +237,11 @@ func RegisterDependencyWithInit(ctx context.Context, dependency any, initFunc fu
 	q := ""
 	if len(qualifier) > 0 {
 		q = qualifier[0]
+	} else {
+		qualifiable, ok := dependency.(Qualifiable)
+		if ok {
+			q = qualifiable.Qualify(ctx)
+		}
 	}
 
 	if _, ok := dependenciesNamespace[namespace]; !ok {
